@@ -13,8 +13,67 @@ import os
 
 st.set_page_config(page_title="LLC Operating Agreement Generator", layout="centered")
 
+# ── Custom CSS ────────────────────────────────────────────────────────────────
+st.markdown("""
+<style>
+.member-card {
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 10px;
+}
+.ownership-bar-container {
+    background: #e9ecef;
+    border-radius: 6px;
+    height: 18px;
+    width: 100%;
+    margin: 6px 0 2px 0;
+    overflow: hidden;
+}
+.ownership-bar-fill {
+    height: 18px;
+    border-radius: 6px;
+    transition: width 0.3s;
+}
+.tag-ok   { color: #198754; font-weight: 600; }
+.tag-warn { color: #dc3545; font-weight: 600; }
+.tag-info { color: #0d6efd; font-weight: 600; }
+</style>
+""", unsafe_allow_html=True)
+
 st.title("🏛 Professional LLC Operating Agreement Generator")
 st.caption("Generate a comprehensive, legally-structured operating agreement for your LLC.")
+
+# =========================
+# SESSION STATE – MEMBERS
+# =========================
+if "members" not in st.session_state:
+    st.session_state.members = [
+        {"name": "", "address": "", "capital": 0.0, "ownership": 100.0, "member_type": "Individual"}
+    ]
+
+def add_member():
+    st.session_state.members.append(
+        {"name": "", "address": "", "capital": 0.0, "ownership": 0.0, "member_type": "Individual"}
+    )
+
+def remove_member(idx):
+    if len(st.session_state.members) > 1:
+        st.session_state.members.pop(idx)
+
+def distribute_equally():
+    n = len(st.session_state.members)
+    share = round(100.0 / n, 4)
+    for i in range(n):
+        st.session_state.members[i]["ownership"] = share
+    # Correct rounding on last member
+    total = sum(m["ownership"] for m in st.session_state.members)
+    diff = round(100.0 - total, 4)
+    if diff != 0:
+        st.session_state.members[-1]["ownership"] = round(
+            st.session_state.members[-1]["ownership"] + diff, 4
+        )
 
 # =========================
 # FORM SECTION
@@ -61,19 +120,110 @@ with st.form("agreement_form"):
 
     # ── Members Information ──────────────────────────────────────────────────
     st.header("👥 Members Information")
-    num_members = st.number_input("Number of Members", min_value=1, max_value=10, value=1)
 
-    members = []
-    for i in range(int(num_members)):
-        with st.expander(f"Member {i+1}", expanded=True):
-            col1, col2 = st.columns(2)
-            with col1:
-                name = st.text_input(f"Full Legal Name", key=f"name_{i}")
-                address = st.text_input(f"Address", key=f"address_{i}")
-            with col2:
-                capital = st.number_input(f"Capital Contribution ($)", min_value=0.0, key=f"capital_{i}")
-                ownership = st.number_input(f"Ownership Percentage (%)", min_value=0.0, max_value=100.0, key=f"ownership_{i}")
-            members.append({"name": name, "address": address, "capital": capital, "ownership": ownership})
+    # ── Ownership summary bar ────────────────────────────────────────────────
+    total_ownership = sum(m["ownership"] for m in st.session_state.members)
+    bar_color = "#198754" if abs(total_ownership - 100.0) < 0.01 else "#dc3545"
+    bar_pct = min(total_ownership, 100.0)
+    ownership_status = "✅ 100% — Ownership is fully allocated." if abs(total_ownership - 100.0) < 0.01 \
+        else f"⚠️ {total_ownership:.2f}% allocated — Must equal exactly 100%."
+    tag_class = "tag-ok" if abs(total_ownership - 100.0) < 0.01 else "tag-warn"
+
+    st.markdown(f"""
+    <div style="margin-bottom:4px;">
+        <span class="{tag_class}">{ownership_status}</span>
+    </div>
+    <div class="ownership-bar-container">
+        <div class="ownership-bar-fill" style="width:{bar_pct}%; background:{bar_color};"></div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Member count & quick actions ────────────────────────────────────────
+    n_members = len(st.session_state.members)
+    st.markdown(
+        f'<span class="tag-info">👤 {n_members} member{"s" if n_members != 1 else ""} added</span>',
+        unsafe_allow_html=True
+    )
+
+    col_add, col_dist, col_spacer = st.columns([1, 2, 3])
+    with col_add:
+        if st.form_submit_button("➕ Add Member", use_container_width=True):
+            add_member()
+            st.rerun()
+    with col_dist:
+        if st.form_submit_button("⚖️ Distribute Equally", use_container_width=True):
+            distribute_equally()
+            st.rerun()
+
+    st.markdown("---")
+
+    # ── Per-member fields ────────────────────────────────────────────────────
+    names_seen = {}
+    for i, m in enumerate(st.session_state.members):
+        label = m["name"].strip() if m["name"].strip() else f"Member {i+1}"
+        with st.expander(f"**Member {i+1}** — {label}", expanded=True):
+
+            # Member type
+            m_type = st.selectbox(
+                "Member Type",
+                ["Individual", "Entity (LLC / Corp / Trust)"],
+                index=0 if m["member_type"] == "Individual" else 1,
+                key=f"mtype_{i}"
+            )
+            st.session_state.members[i]["member_type"] = (
+                "Individual" if m_type == "Individual" else "Entity"
+            )
+
+            c1, c2 = st.columns(2)
+            with c1:
+                name_label = "Full Legal Name" if m_type == "Individual" else "Entity Legal Name"
+                name_val = st.text_input(name_label, value=m["name"], key=f"name_{i}")
+                st.session_state.members[i]["name"] = name_val
+
+                # Duplicate check
+                name_key = name_val.strip().lower()
+                if name_key:
+                    if name_key in names_seen:
+                        st.warning(f"⚠️ Duplicate name detected: \"{name_val.strip()}\" already used by Member {names_seen[name_key]+1}.")
+                    else:
+                        names_seen[name_key] = i
+
+            with c2:
+                addr_label = "Address" if m_type == "Individual" else "Registered / Principal Address"
+                addr_val = st.text_input(addr_label, value=m["address"], key=f"address_{i}")
+                st.session_state.members[i]["address"] = addr_val
+
+            c3, c4 = st.columns(2)
+            with c3:
+                cap_val = st.number_input(
+                    "Capital Contribution ($)",
+                    min_value=0.0,
+                    value=float(m["capital"]),
+                    step=500.0,
+                    format="%.2f",
+                    key=f"capital_{i}"
+                )
+                st.session_state.members[i]["capital"] = cap_val
+
+            with c4:
+                own_val = st.number_input(
+                    "Ownership Percentage (%)",
+                    min_value=0.0,
+                    max_value=100.0,
+                    value=float(m["ownership"]),
+                    step=0.01,
+                    format="%.4f",
+                    key=f"ownership_{i}"
+                )
+                st.session_state.members[i]["ownership"] = own_val
+
+            # Remove button (only if more than 1 member)
+            if len(st.session_state.members) > 1:
+                if st.form_submit_button(f"🗑️ Remove Member {i+1}", key=f"remove_{i}"):
+                    remove_member(i)
+                    st.rerun()
+
+    st.markdown("---")
 
     # ── Financial & Distribution ─────────────────────────────────────────────
     st.header("💰 Financial & Distributions")
@@ -188,9 +338,23 @@ def build_styles():
 
 
 # =========================
+# ROMAN NUMERAL HELPER
+# =========================
+def roman(n):
+    val  = [1000,900,500,400,100,90,50,40,10,9,5,4,1]
+    syms = ['M','CM','D','CD','C','XC','L','XL','X','IX','V','IV','I']
+    result = ''
+    for i in range(len(val)):
+        while n >= val[i]:
+            result += syms[i]
+            n -= val[i]
+    return result
+
+
+# =========================
 # PDF GENERATION FUNCTION
 # =========================
-def generate_pdf():
+def generate_pdf(members):
     file_path = "/tmp/Professional_LLC_Operating_Agreement.pdf"
     doc = SimpleDocTemplate(
         file_path,
@@ -240,81 +404,90 @@ def generate_pdf():
     ))
     elements.append(spacer(0.2))
 
-    # ── TABLE OF CONTENTS (simple) ───────────────────────────────────────────
+    # ── TABLE OF CONTENTS ────────────────────────────────────────────────────
     elements.append(PageBreak())
     elements.append(Paragraph("TABLE OF CONTENTS", s["article"]))
     toc_items = [
-        ("Article I", "Formation"),
-        ("Article II", "Business Purpose"),
-        ("Article III", "Term"),
-        ("Article IV", "Members and Capital Contributions"),
-        ("Article V", "Allocation of Profits and Losses"),
-        ("Article VI", "Distributions"),
-        ("Article VII", "Management and Authority"),
+        ("Article I",    "Formation"),
+        ("Article II",   "Business Purpose"),
+        ("Article III",  "Term"),
+        ("Article IV",   "Members and Capital Contributions"),
+        ("Article V",    "Allocation of Profits and Losses"),
+        ("Article VI",   "Distributions"),
+        ("Article VII",  "Management and Authority"),
         ("Article VIII", "Voting Rights and Member Meetings"),
-        ("Article IX", "Books, Records, and Accounting"),
-        ("Article X", "Tax Treatment"),
-        ("Article XI", "Transfer of Membership Interest"),
-        ("Article XII", "Admission of New Members"),
+        ("Article IX",   "Books, Records, and Accounting"),
+        ("Article X",    "Tax Treatment"),
+        ("Article XI",   "Transfer of Membership Interest"),
+        ("Article XII",  "Admission of New Members"),
         ("Article XIII", "Withdrawal and Dissociation of Members"),
-        ("Article XIV", "Dissolution and Winding Up"),
-        ("Article XV", "Indemnification and Liability"),
-        ("Article XVI", "Dispute Resolution"),
+        ("Article XIV",  "Dissolution and Winding Up"),
+        ("Article XV",   "Indemnification and Liability"),
+        ("Article XVI",  "Dispute Resolution"),
     ]
+    art_num = 17
     if non_compete_clause:
-        toc_items.append(("Article XVII", "Non-Compete and Non-Solicitation"))
+        toc_items.append((f"Article {roman(art_num)}", "Non-Compete and Non-Solicitation"))
+        art_num += 1
     if confidentiality_clause:
-        toc_items.append(("Article XVIII", "Confidentiality"))
+        toc_items.append((f"Article {roman(art_num)}", "Confidentiality"))
+        art_num += 1
     if buyout_clause:
-        toc_items.append(("Article XIX", "Right of First Refusal and Buyout"))
-    toc_items.append(("Article XX", "General Provisions and Amendments"))
+        toc_items.append((f"Article {roman(art_num)}", "Right of First Refusal and Buyout"))
+        art_num += 1
+    toc_items.append((f"Article {roman(art_num)}", "General Provisions and Amendments"))
+    toc_items.append(("Schedule A", "Members and Capital Contributions"))
 
-    for art, title in toc_items:
-        elements.append(body(f"<b>{art}</b> — {title}"))
-    elements.append(PageBreak())
+    toc_data = [[Paragraph(a, s["small"]), Paragraph(t, s["small"])] for a, t in toc_items]
+    toc_table = Table(toc_data, colWidths=[1.6 * inch, 4.4 * inch])
+    toc_table.setStyle(TableStyle([
+        ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING",    (0, 0), (-1, -1), 2),
+        ("LINEBELOW",     (0, 0), (-1, -1), 0.25, colors.HexColor("#eeeeee")),
+    ]))
+    elements.append(toc_table)
 
     # ── ARTICLE I – FORMATION ────────────────────────────────────────────────
+    elements.append(PageBreak())
     elements.extend(article_heading("ARTICLE I — FORMATION"))
-    elements.append(section_heading("1.1  Company Name"))
+    elements.append(section_heading("1.1  Name"))
     elements.append(body(
-        f"The name of the Company is {company_name} LLC. The Company may conduct business under such trade names "
-        f"or assumed names as the Members may approve from time to time in accordance with applicable law."
+        f"The name of the limited liability company is {company_name} LLC (the \"Company\")."
     ))
     elements.append(section_heading("1.2  State of Organization"))
     elements.append(body(
-        f"The Company is organized as a limited liability company under and pursuant to the laws of the State of {state}, "
-        f"including the applicable provisions of the {state} Limited Liability Company Act, as amended from time to time."
+        f"The Company is organized under the laws of the State of {state} and shall be governed by the applicable "
+        f"provisions of the {state} Limited Liability Company Act, as amended from time to time."
     ))
     elements.append(section_heading("1.3  Principal Office"))
     elements.append(body(
-        f"The principal office and place of business of the Company shall be located at {principal_address}, "
-        f"or such other location as the Members may determine from time to time."
+        f"The principal office of the Company shall be located at {principal_address or '[Principal Address]'}. "
+        "The Company may establish additional offices at such other locations as the Members may determine."
     ))
     elements.append(section_heading("1.4  Registered Agent"))
     elements.append(body(
-        f"The registered agent for service of process in the State of {state} is {registered_agent_name}, "
-        f"whose address is {registered_agent_address}. The Company may change its registered agent and/or "
-        f"registered office by filing the appropriate documentation with the {state} Secretary of State."
+        f"The registered agent for service of process is {registered_agent_name or '[Registered Agent Name]'}, "
+        f"located at {registered_agent_address or '[Registered Agent Address]'}. The registered agent may be changed "
+        "by filing the appropriate form with the state and providing notice to all Members."
     ))
-    elements.append(section_heading("1.5  Formation"))
+    elements.append(section_heading("1.5  Effective Date"))
     elements.append(body(
-        f"The Company was formed upon the filing of its Articles of Organization (or Certificate of Formation) "
-        f"with the {state} Secretary of State. The Members agree to be bound by this Agreement from and after the Effective Date."
+        f"This Agreement shall be effective as of {formation_date.strftime('%B %d, %Y')}."
     ))
 
     # ── ARTICLE II – PURPOSE ─────────────────────────────────────────────────
     elements.extend(article_heading("ARTICLE II — BUSINESS PURPOSE"))
-    elements.append(section_heading("2.1  Primary Purpose"))
+    elements.append(section_heading("2.1  Purpose"))
     elements.append(body(
-        f"The primary purpose of the Company is: {purpose}."
+        f"The purpose of the Company is to engage in {purpose or 'any lawful business activity permitted under applicable law'}. "
+        "The Company may also engage in any and all activities necessary, incidental, or ancillary to the foregoing purpose."
     ))
-    elements.append(section_heading("2.2  General Powers"))
+    elements.append(section_heading("2.2  Powers"))
     elements.append(body(
-        "The Company may engage in any and all activities and transactions that are permitted under applicable law "
-        "and that are necessary or convenient to carry out the purposes of the Company, including without limitation: "
-        "(a) acquiring, holding, managing, and disposing of assets; (b) entering into contracts and agreements; "
-        "(c) borrowing money and issuing evidences of indebtedness; (d) employing personnel and engaging contractors; "
-        "and (e) any other lawful activity approved by the Members."
+        "The Company shall have the power to do all things necessary or convenient to carry out its business and affairs, "
+        "including but not limited to: entering into contracts; acquiring, holding, and disposing of property; borrowing "
+        "money; and taking any other action permitted under applicable law."
     ))
 
     # ── ARTICLE III – TERM ───────────────────────────────────────────────────
@@ -322,199 +495,212 @@ def generate_pdf():
     elements.append(section_heading("3.1  Duration"))
     if duration == "Perpetual":
         elements.append(body(
-            "The Company shall continue in existence perpetually unless and until dissolved in accordance with this Agreement "
-            "or as otherwise required by applicable law."
+            "The Company shall have a perpetual existence unless dissolved in accordance with the provisions "
+            "of this Agreement or as required by applicable law."
         ))
     else:
         elements.append(body(
-            f"The Company shall exist for {duration_detail}, unless sooner dissolved in accordance with this Agreement "
-            f"or as otherwise required by applicable law. Upon expiration of such term, the Company shall wind up and dissolve "
-            f"unless the Members unanimously agree in writing to extend the term."
+            f"The Company shall continue for a term of {duration_detail or '[specified term]'}, "
+            "unless earlier dissolved in accordance with the provisions of this Agreement or applicable law."
         ))
 
-    # ── ARTICLE IV – MEMBERS & CAPITAL ───────────────────────────────────────
+    # ── ARTICLE IV – MEMBERS & CAPITAL ──────────────────────────────────────
     elements.extend(article_heading("ARTICLE IV — MEMBERS AND CAPITAL CONTRIBUTIONS"))
     elements.append(section_heading("4.1  Initial Members"))
     elements.append(body(
-        "The following persons are the initial Members of the Company, with their respective addresses, "
-        "initial capital contributions, and ownership (membership) interests:"
+        "The initial Members of the Company, their addresses, capital contributions, and ownership percentages "
+        "are set forth in Schedule A attached hereto and incorporated herein by reference."
     ))
-    elements.append(spacer(0.1))
 
-    # Members Table
-    table_data = [["Member Name", "Address", "Capital Contribution", "Ownership %"]]
-    for m in members:
-        table_data.append([
-            m["name"] or "—",
-            m["address"] or "—",
-            f"${m['capital']:,.2f}",
-            f"{m['ownership']:.2f}%"
-        ])
+    # Members table
     total_capital = sum(m["capital"] for m in members)
-    total_ownership = sum(m["ownership"] for m in members)
-    table_data.append(["TOTAL", "", f"${total_capital:,.2f}", f"{total_ownership:.2f}%"])
-
-    col_widths = [1.6 * inch, 1.9 * inch, 1.4 * inch, 1.0 * inch]
-    members_table = Table(table_data, colWidths=col_widths, repeatRows=1)
+    header_row = [
+        Paragraph("Member Name", s["section"]),
+        Paragraph("Type", s["section"]),
+        Paragraph("Address", s["section"]),
+        Paragraph("Capital ($)", s["section"]),
+        Paragraph("Ownership (%)", s["section"]),
+    ]
+    member_rows = [header_row]
+    for m in members:
+        member_rows.append([
+            Paragraph(m["name"] or "—", s["small"]),
+            Paragraph(m.get("member_type", "Individual"), s["small"]),
+            Paragraph(m["address"] or "—", s["small"]),
+            Paragraph(f"${m['capital']:,.2f}", s["small"]),
+            Paragraph(f"{m['ownership']:.4f}%", s["small"]),
+        ])
+    member_rows.append([
+        Paragraph("TOTAL", s["section"]),
+        Paragraph("", s["small"]),
+        Paragraph("", s["small"]),
+        Paragraph(f"${total_capital:,.2f}", s["section"]),
+        Paragraph("100.0000%", s["section"]),
+    ])
+    members_table = Table(
+        member_rows,
+        colWidths=[1.4*inch, 0.7*inch, 1.8*inch, 1.0*inch, 1.1*inch]
+    )
     members_table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a1a2e")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, -1), 9),
-        ("ALIGN", (2, 0), (-1, -1), "CENTER"),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, colors.HexColor("#f5f5f5")]),
-        ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#e8e8e8")),
-        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
-        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#aaaaaa")),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 6),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-        ("TOPPADDING", (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("BACKGROUND",    (0, 0), (-1, 0),  colors.HexColor("#1a1a2e")),
+        ("TEXTCOLOR",     (0, 0), (-1, 0),  colors.white),
+        ("BACKGROUND",    (0, -1), (-1, -1), colors.HexColor("#e8e8f0")),
+        ("ROWBACKGROUNDS",(0, 1), (-1, -2), [colors.white, colors.HexColor("#f5f5fa")]),
+        ("GRID",          (0, 0), (-1, -1), 0.4, colors.HexColor("#cccccc")),
+        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING",    (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 6),
     ]))
     elements.append(members_table)
     elements.append(spacer(0.15))
 
     elements.append(section_heading("4.2  Additional Capital Contributions"))
     elements.append(body(
-        "No Member shall be required to make any additional capital contribution to the Company beyond the initial "
-        "contribution set forth in Section 4.1 without the unanimous written consent of all Members. Any additional "
-        "capital contribution shall be made on terms and conditions as agreed by the Members and shall be reflected "
-        "in an amendment to this Agreement or a separate written instrument signed by all Members."
+        "No Member shall be required to make any additional capital contribution to the Company without such "
+        "Member's prior written consent. The Members may, by unanimous written agreement, agree to make "
+        "additional capital contributions in such amounts and at such times as they may determine."
     ))
     elements.append(section_heading("4.3  Capital Accounts"))
     elements.append(body(
-        "A separate capital account shall be maintained for each Member. Each Member's capital account shall be "
-        "credited with such Member's capital contributions and allocated profits, and shall be debited with "
-        "such Member's allocated losses and distributions. Capital accounts shall be maintained in accordance "
-        "with applicable Treasury Regulations."
+        "A separate capital account shall be maintained for each Member. Each Member's capital account shall "
+        "be credited with such Member's capital contributions and allocated share of profits, and shall be "
+        "debited with such Member's allocated share of losses and distributions."
     ))
     elements.append(section_heading("4.4  No Interest on Capital"))
     elements.append(body(
-        "No Member shall be entitled to receive interest on their capital contribution unless otherwise unanimously "
-        "agreed in writing by all Members."
+        "No Member shall be entitled to receive interest on their capital contribution unless otherwise "
+        "unanimously agreed in writing by all Members."
     ))
     elements.append(section_heading("4.5  Return of Capital"))
     elements.append(body(
-        "No Member shall have the right to demand or receive the return of their capital contribution except upon "
-        "dissolution and winding up of the Company, or as otherwise agreed in writing by all Members. No Member "
-        "shall be liable to any other Member for the return of a capital contribution."
+        "No Member shall have the right to demand or receive the return of their capital contribution except "
+        "upon dissolution and winding up of the Company or as otherwise agreed in writing by all Members."
     ))
 
     # ── ARTICLE V – PROFITS & LOSSES ─────────────────────────────────────────
     elements.extend(article_heading("ARTICLE V — ALLOCATION OF PROFITS AND LOSSES"))
-    elements.append(section_heading("5.1  General Allocation"))
+    elements.append(section_heading("5.1  Allocation of Profits"))
     elements.append(body(
-        "Except as otherwise provided in this Agreement, the net profits and net losses of the Company for each "
-        "fiscal year shall be allocated among the Members in proportion to their respective ownership percentages "
-        "as set forth in Section 4.1, as adjusted from time to time."
+        "The net profits of the Company for each fiscal year shall be allocated among the Members in proportion "
+        "to their respective ownership percentages as set forth in Schedule A, unless otherwise agreed in writing."
     ))
-    elements.append(section_heading("5.2  Special Allocations"))
+    elements.append(section_heading("5.2  Allocation of Losses"))
     elements.append(body(
-        "Notwithstanding Section 5.1, the following special allocations shall be made in the following order: "
-        "(a) Minimum Gain Chargeback: If there is a net decrease in Company minimum gain during any fiscal year, "
-        "each Member shall be allocated items of income and gain as required under Treasury Regulation "
-        "Section 1.704-2(f); (b) Member Minimum Gain Chargeback: If there is a net decrease in Member nonrecourse "
-        "debt minimum gain during any fiscal year, certain items of income and gain shall be allocated to the Members "
-        "as required under Treasury Regulation Section 1.704-2(i)(4)."
+        "The net losses of the Company for each fiscal year shall be allocated among the Members in proportion "
+        "to their respective ownership percentages, subject to the limitations of applicable tax law regarding "
+        "the deductibility of losses."
     ))
-    elements.append(section_heading("5.3  Tax Allocations"))
+    elements.append(section_heading("5.3  Special Allocations"))
     elements.append(body(
-        "For income tax purposes, each item of Company income, gain, loss, deduction, and credit shall be allocated "
-        "among the Members in the same manner as the corresponding book item is allocated, except as required by "
-        "Section 704(c) of the Internal Revenue Code and the Treasury Regulations thereunder."
+        "Notwithstanding the foregoing, the Members may agree in writing to make special allocations of income, "
+        "gain, loss, or deduction for tax purposes, provided such allocations have substantial economic effect "
+        "as required under the Internal Revenue Code and Treasury Regulations."
     ))
 
     # ── ARTICLE VI – DISTRIBUTIONS ───────────────────────────────────────────
     elements.extend(article_heading("ARTICLE VI — DISTRIBUTIONS"))
     elements.append(section_heading("6.1  Distributions"))
     elements.append(body(
-        f"Distributions of available cash and other Company assets shall be made to the Members "
-        f"{distribution_frequency.lower()}, in proportion to their respective ownership percentages, "
-        f"unless the Members unanimously agree otherwise in writing. The Company shall retain sufficient "
-        f"reserves for working capital, liabilities, and contingencies as reasonably determined by the "
-        f"Members or Managers."
+        f"Distributions of available cash or other assets shall be made {distribution_frequency.lower()} "
+        "to the Members in proportion to their respective ownership percentages, subject to the retention of "
+        "reasonable reserves for Company operations, liabilities, and contingencies."
     ))
-    elements.append(section_heading("6.2  Withholding"))
+    elements.append(section_heading("6.2  Limitations on Distributions"))
     elements.append(body(
-        "The Company is authorized to withhold from any distribution to a Member, or to pay on behalf of a Member, "
-        "any amount required by applicable federal, state, or local law. Any amount so withheld shall be treated as "
-        "a distribution to that Member for all purposes of this Agreement."
+        f"No distribution shall be made to any Member if, after giving effect to such distribution, the Company "
+        "would be unable to pay its debts as they become due in the ordinary course of business, or if such "
+        f"distribution would violate applicable {state} law."
     ))
-    elements.append(section_heading("6.3  Limitations on Distributions"))
+    elements.append(section_heading("6.3  Tax Distributions"))
     elements.append(body(
-        "No distribution shall be made if, after giving effect to the distribution, the Company would be unable to "
-        "pay its debts as they become due in the ordinary course of business, or if the Company's total assets would "
-        "be less than the sum of its total liabilities. Any distribution made in violation of this provision shall "
-        "be returned to the Company."
+        "To the extent funds are available, the Company shall make quarterly tax distributions to each Member "
+        "in an amount sufficient to enable each Member to pay estimated income taxes on their allocable share "
+        "of Company taxable income, calculated at the highest combined federal and state marginal rate applicable."
     ))
 
     # ── ARTICLE VII – MANAGEMENT ─────────────────────────────────────────────
     elements.extend(article_heading("ARTICLE VII — MANAGEMENT AND AUTHORITY"))
-    elements.append(section_heading("7.1  Management Structure"))
-    elements.append(body(
-        f"The Company shall be {management_type}. "
-        + (f"The Manager(s) of the Company are {manager_name}, whose address is {manager_address}. "
-           f"The Managers shall have full authority to manage and control the business and affairs of the Company, "
-           f"subject to the provisions of this Agreement."
-           if management_type == "Manager-Managed"
-           else
-           "All Members shall have the right and authority to participate in the management and conduct of the "
-           "Company's business, subject to the provisions of this Agreement. Each Member acting alone shall have "
-           "authority to bind the Company in the ordinary course of business unless otherwise restricted herein.")
-    ))
-    elements.append(section_heading("7.2  Authority of Managers/Members"))
-    elements.append(body(
-        "Subject to the limitations set forth in this Agreement, the authorized manager(s) or member(s) shall have "
-        "full power and authority on behalf of the Company to: (a) execute contracts and agreements; (b) open and "
-        "manage bank accounts; (c) hire and terminate employees and independent contractors; (d) purchase, lease, "
-        "or dispose of Company assets; (e) borrow money and grant security interests in Company assets; "
-        "(f) institute or defend legal proceedings; and (g) take all other actions necessary or appropriate to "
-        "carry out the purposes of the Company."
-    ))
-    elements.append(section_heading("7.3  Actions Requiring Member Approval"))
-    elements.append(body(
-        f"Notwithstanding Section 7.2, the following actions shall require {voting_threshold_major.lower()} of "
-        "the Members: (a) amendment of this Agreement or the Articles of Organization; (b) merger, consolidation, "
-        "or conversion of the Company; (c) sale of all or substantially all of the Company's assets outside the "
-        "ordinary course of business; (d) incurring indebtedness in excess of amounts established by the Members; "
-        "(e) admission of new Members; (f) dissolution of the Company; and (g) any other action expressly requiring "
-        "Member approval under this Agreement or applicable law."
-    ))
-    if management_type == "Manager-Managed":
-        elements.append(section_heading("7.4  Removal and Replacement of Managers"))
+    if management_type == "Member-Managed":
+        elements.append(section_heading("7.1  Member-Managed"))
         elements.append(body(
-            "A Manager may be removed at any time, with or without cause, by a vote of the Members holding a majority "
-            "of the membership interests. Upon removal, resignation, or incapacity of a Manager, a successor Manager "
-            "shall be appointed by majority vote of the Members."
+            "The Company shall be managed by its Members. Each Member shall have the right and authority to "
+            "act on behalf of the Company in the ordinary course of its business, subject to the voting "
+            "requirements set forth in Article VIII."
+        ))
+        elements.append(section_heading("7.2  Authority of Members"))
+        elements.append(body(
+            "Each Member is hereby authorized to execute contracts, open and manage bank accounts, hire and "
+            "terminate employees, and take all other actions necessary to carry out the Company's business, "
+            "provided that major decisions shall require Member approval as set forth in Article VIII."
+        ))
+    else:
+        elements.append(section_heading("7.1  Manager-Managed"))
+        elements.append(body(
+            f"The business and affairs of the Company shall be managed by one or more Managers. The initial "
+            f"Manager(s) of the Company shall be {manager_name or '[Manager Name]'}, located at "
+            f"{manager_address or '[Manager Address]'}."
+        ))
+        elements.append(section_heading("7.2  Authority of Manager"))
+        elements.append(body(
+            "The Manager(s) shall have full and exclusive authority to manage and control the business and "
+            "affairs of the Company, including the power to execute contracts, manage accounts, hire personnel, "
+            "and take all actions in the ordinary course of business, subject to the limitations set forth herein."
+        ))
+        elements.append(section_heading("7.3  Limitations on Manager Authority"))
+        elements.append(body(
+            f"Without the approval of Members by {voting_threshold_major.lower()}, no Manager shall: "
+            "(a) sell, lease, or otherwise dispose of all or substantially all of the Company's assets; "
+            "(b) merge or consolidate the Company with another entity; (c) incur indebtedness exceeding "
+            "$50,000 in any single transaction; (d) admit new Members; or (e) amend this Agreement."
+        ))
+        elements.append(section_heading("7.4  Removal and Replacement of Manager"))
+        elements.append(body(
+            f"A Manager may be removed with or without cause by a {voting_threshold_major.lower()} vote of "
+            "the Members. A successor Manager shall be elected by the same voting threshold."
         ))
 
-    # ── ARTICLE VIII – VOTING ─────────────────────────────────────────────────
-    elements.extend(article_heading("ARTICLE VIII — VOTING RIGHTS AND MEMBER MEETINGS"))
-    elements.append(section_heading("8.1  Voting Power"))
+    elements.append(section_heading("7.3  Officers" if management_type == "Member-Managed" else "7.5  Officers"))
     elements.append(body(
-        "Each Member shall have voting power proportional to their ownership interest as set forth in Section 4.1. "
-        "Votes may be cast in person, by proxy, or by written consent."
+        "The Members or Manager(s) may appoint officers of the Company, including a President, Vice President, "
+        "Secretary, and Treasurer, with such duties and compensation as the Members or Managers may determine. "
+        "Officers serve at the pleasure of the Members or Managers and may be removed at any time."
     ))
-    elements.append(section_heading("8.2  Annual Meetings"))
+
+    # ── ARTICLE VIII – VOTING ────────────────────────────────────────────────
+    elements.extend(article_heading("ARTICLE VIII — VOTING RIGHTS AND MEMBER MEETINGS"))
+    elements.append(section_heading("8.1  Voting Rights"))
+    elements.append(body(
+        "Each Member shall be entitled to vote on matters submitted to a vote of the Members in proportion to "
+        "their ownership percentage. Voting may be conducted in person, by proxy, or by written consent."
+    ))
+    elements.append(section_heading("8.2  Major Decisions"))
+    elements.append(body(
+        f"The following actions shall require approval by {voting_threshold_major.lower()} of the Members: "
+        "(a) amendment of this Agreement or the Articles of Organization; (b) sale of all or substantially "
+        "all Company assets; (c) merger, consolidation, or reorganization; (d) admission of new Members; "
+        "(e) dissolution of the Company; (f) any transaction involving a conflict of interest; and "
+        "(g) any other matter designated as a major decision in this Agreement."
+    ))
+    elements.append(section_heading("8.3  Annual Meeting"))
     elements.append(body(
         "The Members shall hold an annual meeting at a time and place determined by the Members or Managers to "
         "review the financial condition of the Company, elect or confirm Managers (if applicable), and transact "
         "such other business as may properly come before the meeting."
     ))
-    elements.append(section_heading("8.3  Special Meetings"))
+    elements.append(section_heading("8.4  Special Meetings"))
     elements.append(body(
         "Special meetings of the Members may be called at any time by Members holding at least twenty-five percent "
         "(25%) of the total membership interests, upon not less than five (5) days' prior written notice stating "
         "the purpose of the meeting."
     ))
-    elements.append(section_heading("8.4  Written Consent in Lieu of Meeting"))
+    elements.append(section_heading("8.5  Written Consent in Lieu of Meeting"))
     elements.append(body(
         "Any action required or permitted to be taken at a meeting of the Members may be taken without a meeting "
         "if all Members consent in writing to such action. Such written consent shall be filed with the minutes "
         "of the Company and shall have the same force and effect as a unanimous vote at a duly convened meeting."
     ))
-    elements.append(section_heading("8.5  Quorum"))
+    elements.append(section_heading("8.6  Quorum"))
     elements.append(body(
         "Members holding a majority of the total membership interests shall constitute a quorum for the transaction "
         "of business at any meeting. In the absence of a quorum, the Members present may adjourn the meeting to "
@@ -555,8 +741,7 @@ def generate_pdf():
     elements.append(body(
         f"It is the intent of the Members that the Company be treated as a {tax_status} for federal income tax "
         "purposes. The Company and each Member shall file all tax returns and shall make all tax elections "
-        "consistent with this tax treatment. The Members acknowledge that this Agreement shall not be construed "
-        "to create an association taxable as a corporation unless affirmatively elected."
+        "consistent with this tax treatment."
     ))
     elements.append(section_heading("10.2  Tax Matters Member/Partner"))
     elements.append(body(
@@ -670,8 +855,8 @@ def generate_pdf():
     ))
     elements.append(section_heading("15.3  Insurance"))
     elements.append(body(
-        "The Company may, at the discretion of the Members, purchase and maintain insurance on behalf of any "
-        "Indemnified Person against any liability asserted against such person in their official capacity."
+        "The Company may purchase and maintain insurance on behalf of any Indemnified Person against any liability "
+        "asserted against such person in their official capacity."
     ))
 
     # ── ARTICLE XVI – DISPUTE RESOLUTION ────────────────────────────────────
@@ -722,7 +907,7 @@ def generate_pdf():
         ))
         elements.append(section_heading(f"{article_num}.2  Non-Solicitation"))
         elements.append(body(
-            "During the period described in Section {article_num}.1, no Member shall, directly or indirectly, "
+            f"During the period described in Section {article_num}.1, no Member shall, directly or indirectly, "
             "solicit, hire, or attempt to induce any employee, contractor, or customer of the Company to "
             "terminate their relationship with the Company."
         ))
@@ -776,7 +961,7 @@ def generate_pdf():
         ))
         article_num += 1
 
-    # ── ARTICLE XX – GENERAL PROVISIONS ─────────────────────────────────────
+    # ── GENERAL PROVISIONS ───────────────────────────────────────────────────
     elements.extend(article_heading(f"ARTICLE {roman(article_num)} — GENERAL PROVISIONS AND AMENDMENTS"))
     elements.append(section_heading(f"{article_num}.1  Entire Agreement"))
     elements.append(body(
@@ -833,16 +1018,18 @@ def generate_pdf():
 
     for m in members:
         sig_data = [
-            [Paragraph("Signature:", s["small"]), Paragraph("_" * 42, s["small"])],
-            [Paragraph("Printed Name:", s["small"]), Paragraph(m["name"] or "____________________", s["small"])],
-            [Paragraph("Date:", s["small"]), Paragraph("____________________", s["small"])],
-            [Paragraph("Ownership Interest:", s["small"]), Paragraph(f"{m['ownership']:.2f}%", s["small"])],
+            [Paragraph("Signature:", s["small"]),        Paragraph("_" * 42, s["small"])],
+            [Paragraph("Printed Name:", s["small"]),     Paragraph(m["name"] or "____________________", s["small"])],
+            [Paragraph("Member Type:", s["small"]),      Paragraph(m.get("member_type", "Individual"), s["small"])],
+            [Paragraph("Date:", s["small"]),             Paragraph("____________________", s["small"])],
+            [Paragraph("Ownership Interest:", s["small"]), Paragraph(f"{m['ownership']:.4f}%", s["small"])],
+            [Paragraph("Capital Contribution:", s["small"]), Paragraph(f"${m['capital']:,.2f}", s["small"])],
         ]
-        sig_table = Table(sig_data, colWidths=[1.5 * inch, 4.0 * inch])
+        sig_table = Table(sig_data, colWidths=[1.6 * inch, 4.0 * inch])
         sig_table.setStyle(TableStyle([
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-            ("TOPPADDING", (0, 0), (-1, -1), 2),
+            ("TOPPADDING",    (0, 0), (-1, -1), 2),
         ]))
         elements.append(KeepTogether([sig_table, spacer(0.4)]))
 
@@ -851,15 +1038,15 @@ def generate_pdf():
         elements.append(Paragraph("MANAGER SIGNATURE", s["section"]))
         elements.append(spacer(0.1))
         sig_data = [
-            [Paragraph("Signature:", s["small"]), Paragraph("_" * 42, s["small"])],
+            [Paragraph("Signature:", s["small"]),    Paragraph("_" * 42, s["small"])],
             [Paragraph("Manager Name:", s["small"]), Paragraph(manager_name or "____________________", s["small"])],
-            [Paragraph("Date:", s["small"]), Paragraph("____________________", s["small"])],
+            [Paragraph("Date:", s["small"]),         Paragraph("____________________", s["small"])],
         ]
-        sig_table = Table(sig_data, colWidths=[1.5 * inch, 4.0 * inch])
+        sig_table = Table(sig_data, colWidths=[1.6 * inch, 4.0 * inch])
         sig_table.setStyle(TableStyle([
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-            ("TOPPADDING", (0, 0), (-1, -1), 2),
+            ("TOPPADDING",    (0, 0), (-1, -1), 2),
         ]))
         elements.append(sig_table)
 
@@ -880,30 +1067,63 @@ def generate_pdf():
     return file_path
 
 
-def roman(n):
-    """Convert integer to Roman numeral string."""
-    val = [1000,900,500,400,100,90,50,40,10,9,5,4,1]
-    syms = ['M','CM','D','CD','C','XC','L','XL','X','IX','V','IV','I']
-    result = ''
-    for i in range(len(val)):
-        while n >= val[i]:
-            result += syms[i]
-            n -= val[i]
-    return result
-
-
 # =========================
 # GENERATE ON SUBMIT
 # =========================
 if submit:
+    members_snapshot = [dict(m) for m in st.session_state.members]
+    total_own = sum(m["ownership"] for m in members_snapshot)
+    errors = []
+
     if not company_name or not state:
-        st.error("Please fill in at least the LLC Name and State of Formation.")
+        errors.append("LLC Name and State of Formation are required.")
+    if abs(total_own - 100.0) >= 0.01:
+        errors.append(
+            f"Total ownership is **{total_own:.4f}%** — it must equal exactly **100%**. "
+            "Use the '⚖️ Distribute Equally' button or adjust individual percentages."
+        )
+    missing_names = [i+1 for i, m in enumerate(members_snapshot) if not m["name"].strip()]
+    if missing_names:
+        errors.append(
+            f"Full Legal Name is required for Member(s): {', '.join(str(n) for n in missing_names)}."
+        )
+    # Duplicate name check
+    seen = {}
+    for i, m in enumerate(members_snapshot):
+        key = m["name"].strip().lower()
+        if key:
+            if key in seen:
+                errors.append(
+                    f"Duplicate member name: \"{m['name'].strip()}\" appears for both "
+                    f"Member {seen[key]+1} and Member {i+1}."
+                )
+            else:
+                seen[key] = i
+
+    if errors:
+        for e in errors:
+            st.error(e)
     else:
         with st.spinner("Generating your professional operating agreement..."):
-            pdf_path = generate_pdf()
+            pdf_path = generate_pdf(members_snapshot)
         with open(pdf_path, "rb") as f:
             pdf_bytes = f.read()
         st.success("✅ Your Operating Agreement has been generated successfully!")
+
+        # Member summary table in the UI
+        st.markdown("#### 👥 Member Summary")
+        summary_cols = st.columns([3, 2, 2, 2])
+        summary_cols[0].markdown("**Name**")
+        summary_cols[1].markdown("**Type**")
+        summary_cols[2].markdown("**Capital**")
+        summary_cols[3].markdown("**Ownership**")
+        for m in members_snapshot:
+            c = st.columns([3, 2, 2, 2])
+            c[0].write(m["name"])
+            c[1].write(m.get("member_type", "Individual"))
+            c[2].write(f"${m['capital']:,.2f}")
+            c[3].write(f"{m['ownership']:.4f}%")
+
         st.download_button(
             label="📥 Download Operating Agreement (PDF)",
             data=pdf_bytes,
